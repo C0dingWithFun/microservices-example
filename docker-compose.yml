@@ -1,0 +1,14 @@
+# Use postgres/example user/password credentials
+version: '3.1'
+
+services:
+  rabbitmq:
+    image: rabbitmq:management
+    container_name: rabbitmq
+    volumes:
+      - ./docker-data/rabbitmq/etc/:/etc/rabbitmq/
+      - ./docker-data/rabbitmq/data/:/var/lib/rabbitmq/
+      - ./docker-data/rabbitmq/logs/:/var/log/rabbitmq/
+    ports:
+      - 5672:5672
+      - 15672:15672
