@@ -1,7 +1,8 @@
 import express from 'express';
 import amqp from 'amqplib/callback_api';
-
-const app = express();
+import 'reflect-metadata';
+import { ApolloServer, gql } from 'apollo-server';
+import { buildFederatedSchema } from '@apollo/federation';
 
 amqp.connect('amqp://localhost', function (error0, connection) {
   if (error0) {
@@ -12,59 +13,139 @@ amqp.connect('amqp://localhost', function (error0, connection) {
       throw error1;
     }
     var queue = 'blogs';
-
-    channel.assertQueue(queue, {
-      durable: false,
-    });
-
-    console.log(' [*] Waiting for messages in %s. To exit press CTRL+C', queue);
-    channel.consume(
-      queue,
-      function (msg) {
-        setTimeout(function () {
-          console.log(' [x] Received %s', msg?.content?.toString());
-        }, 7000);
-      },
+    channel.assertExchange('blogs.exchange', 'fanout', { durable: false });
+    channel.assertQueue(
+      '',
       {
-        noAck: true,
+        exclusive: true,
+      },
+      function (error2, q) {
+        if (error2) {
+          throw error2;
+        }
+        console.log(
+          ' [*] Waiting for messages in %s. To exit press CTRL+C',
+          queue
+        );
+        channel.bindQueue(q.queue, 'blogs.exchange', '');
+
+        channel.consume(
+          q.queue,
+          function (msg) {
+            setTimeout(function () {
+              console.log(' [x] Received %s', msg?.content?.toString());
+            }, 7000);
+          },
+          {
+            noAck: true,
+          }
+        );
       }
     );
   });
 });
 
-app.get('/', (_, res) => {
-  res.json({
-    message: 'Hello from users services!',
+// Construct a schema, using GraphQL schema language
+// const typeDefs = gql`
+//   type Query {
+//     hello: String
+//   }
+// `;
+
+// // Provide resolver functions for your schema fields
+// const resolvers = {
+//   Query: {
+//     hello: () => 'Hello world!',
+//   },
+// };
+
+const main = async () => {
+  const app = express();
+
+  app.get('/', (_, res) => {
+    res.json({
+      message: 'Hello from user services!',
+    });
   });
-});
 
-app.get('/events', (_, res) => {
-  amqp.connect('amqp://localhost', function (error0, connection) {
-    if (error0) {
-      throw error0;
-    }
-    connection.createChannel(function (error1, channel) {
-      if (error1) {
-        throw error1;
+  app.get('/events', (req, res) => {
+    const username = req.params.username || 'helloWorld';
+    amqp.connect('amqp://localhost', function (error0, connection) {
+      if (error0) {
+        throw error0;
       }
-      var queue = 'blogs';
-      var msg = 'Hello world from blog!';
+      connection.createChannel(function (error1, channel) {
+        if (error1) {
+          throw error1;
+        }
+        // var queue = 'blogs.queue';
+        var msg = username;
 
-      channel.assertQueue(queue, {
-        durable: false,
+        channel.assertExchange('blogs.exchange', 'fanout', { durable: false });
+
+        channel.publish('blogs.exchange', '', Buffer.from(msg));
+        console.log(' [x] Sent %s', msg);
       });
 
-      channel.sendToQueue(queue, Buffer.from(msg));
-      console.log(' [x] Sent %s', msg);
+      setTimeout(function () {
+        connection.close();
+      }, 1000);
     });
-
-    connection.close();
+    res.json({
+      message: 'User Event Sent!',
+    });
   });
-  res.json({
-    message: 'Blog Event Sent!',
-  });
-});
 
-app.listen(4001, () =>
-  console.log('users service has started listening on 4001')
-);
+  const users = [
+    {
+      id: '1',
+      name: 'Ada Lovelace',
+      birthDate: '1815-12-10',
+      username: '@ada',
+    },
+    {
+      id: '2',
+      name: 'Alan Turing',
+      birthDate: '1912-06-23',
+      username: '@complete',
+    },
+  ];
+
+  // Construct a schema, using GraphQL schema language
+  const typeDefs = gql`
+    extend type Query {
+      helloUser: String
+      me: User
+    }
+    type User @key(fields: "id") {
+      id: ID!
+      name: String
+      username: String
+    }
+  `;
+
+  // Provide resolver functions for your schema fields
+  const resolvers = {
+    Query: {
+      helloUser: () => 'Hello world from Users!',
+      me: () => {
+        return users[0];
+      },
+    },
+    User: {
+      __resolveReference(object: any) {
+        return users.find((user) => user.id === object.id);
+      },
+    },
+  };
+
+  const server = new ApolloServer({
+    schema: buildFederatedSchema([{ typeDefs, resolvers }]),
+  });
+
+  server
+    .listen(4002)
+    .then(() => console.log('user service has started listening on 4002'));
+};
+
+main();
